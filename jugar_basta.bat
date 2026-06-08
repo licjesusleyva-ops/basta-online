@@ -1,0 +1,9 @@
+@echo off
+echo Iniciando Servidor de Basta...
+start cmd /k "cd server && npm start"
+
+echo Dando tiempo al servidor para arrancar...
+timeout /t 2 /nobreak > nul
+
+echo Iniciando Cliente de Basta...
+start cmd /k "cd client && npm run dev -- --host"
