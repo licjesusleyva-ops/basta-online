@@ -40,7 +40,14 @@ function App() {
   }
 
   const startGame = () => socket.emit('start-game', room)
-  const restartRound = () => socket.emit('restart-round', room)
+  
+  // NUEVO: Alerta de confirmación para reiniciar
+  const restartRound = () => {
+    const confirmacion = window.confirm('¿Estás seguro de que quieres reiniciar la ronda? Se borrará el progreso de todos en esta letra.')
+    if (confirmacion) {
+      socket.emit('restart-round', room)
+    }
+  }
 
   const submitAnswers = () => socket.emit('submit-answers', { room, answers })
 
