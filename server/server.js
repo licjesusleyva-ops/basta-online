@@ -10,7 +10,10 @@ const server = http.createServer(app)
 const io = new Server(server, { cors: { origin: '*' } })
 
 const rooms = {}
+const intervals = {} // Aquí guardaremos los relojes de cada sala
 const letters = 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ'
+
+const categories = ['Nombre', 'Apellido', 'Ciudad o país', 'Animal', 'Color', 'Fruta o comida', 'Cosa', 'Marca']
 
 function randomLetter() {
   return letters[Math.floor(Math.random() * letters.length)]
@@ -21,10 +24,11 @@ function getRoom(room) {
     rooms[room] = {
       players: [],
       letter: 'A',
-      phase: 'waiting', // Fases: 'waiting', 'playing', 'voting', 'results'
+      phase: 'waiting', 
       answers: {},
       scores: {},
-      votes: {} // Aquí guardaremos los votos de todos
+      votes: {},
+      timer: 60 // 60 segundos iniciales
     }
   }
   return rooms[room]
@@ -50,11 +54,32 @@ io.on('connection', (socket) => {
   socket.on('start-game', (room) => {
     const cleanRoom = String(room || '').trim().toUpperCase()
     const gameRoom = getRoom(cleanRoom)
+    
+    // Limpiamos cualquier reloj viejo activo
+    if (intervals[cleanRoom]) clearInterval(intervals[cleanRoom])
+
     gameRoom.letter = randomLetter()
     gameRoom.phase = 'playing'
     gameRoom.answers = {}
     gameRoom.scores = {}
     gameRoom.votes = {}
+    gameRoom.timer = 60 // Reiniciamos reloj a 1 minuto
+
+    // Iniciamos el conteo regresivo de 1 minuto en el servidor
+    intervals[cleanRoom] = setInterval(() => {
+      const currentRoom = rooms[cleanRoom]
+      if (currentRoom && currentRoom.phase === 'playing') {
+        currentRoom.timer--
+        if (currentRoom.timer <= 0) {
+          clearInterval(intervals[cleanRoom])
+          currentRoom.phase = 'voting' // Se acabó el tiempo, a votar
+        }
+        io.to(cleanRoom).emit('room-state', currentRoom)
+      } else {
+        clearInterval(intervals[cleanRoom])
+      }
+    }, 1000)
+
     io.to(cleanRoom).emit('room-state', gameRoom)
   })
 
@@ -70,7 +95,9 @@ io.on('connection', (socket) => {
   socket.on('basta', (room) => {
     const cleanRoom = String(room || '').trim().toUpperCase()
     const gameRoom = getRoom(cleanRoom)
-    gameRoom.phase = 'voting' // Pasamos a la fase de votación
+    
+    if (intervals[cleanRoom]) clearInterval(intervals[cleanRoom]) // Detenemos el reloj
+    gameRoom.phase = 'voting'
     io.to(cleanRoom).emit('room-state', gameRoom)
   })
 
@@ -78,33 +105,34 @@ io.on('connection', (socket) => {
     const cleanRoom = String(room || '').trim().toUpperCase()
     const gameRoom = getRoom(cleanRoom)
     
-    // Guardamos los votos de este jugador
     gameRoom.votes[socket.id] = votes
 
-    // Verificamos si ya votaron todos los jugadores de la sala
+    // Si ya votaron todos, hacemos el escrutinio
     if (Object.keys(gameRoom.votes).length >= gameRoom.players.length) {
       const scores = {}
       
-      // Contamos los votos palabra por palabra
       Object.entries(gameRoom.answers).forEach(([targetId, payload]) => {
         let points = 0
-        Object.entries(payload.answers || {}).forEach(([category, answer]) => {
-          if (!answer || !String(answer).trim()) return // Sin respuesta = 0 pts
+        
+        // Evaluamos cada categoría de forma independiente
+        categories.forEach(category => {
+          const answer = payload.answers?.[category]
+          if (!answer || !String(answer).trim()) return // Si está vacía, no suma pero no rompe las demás
 
           let yes = 0
           let no = 0
 
-          // Recorremos los votos de los demás
+          // Contamos los votos de la comunidad
           Object.values(gameRoom.votes).forEach(playerVotes => {
             const vote = playerVotes[targetId]?.[category]
             if (vote === true) yes++
             if (vote === false) no++
           })
 
-          // Lógica base: ¿Empieza con la letra correcta?
+          // Regla por defecto: ¿Empieza con la letra correcta?
           let isValid = String(answer).trim().toUpperCase().startsWith(gameRoom.letter)
           
-          // La democracia manda: Los votos sobrescriben la regla anterior
+          // La democracia manda: si hay votos, ganan las mayorías
           if (no > yes) isValid = false
           if (yes > no) isValid = true
 
@@ -117,7 +145,7 @@ io.on('connection', (socket) => {
       })
 
       gameRoom.scores = scores
-      gameRoom.phase = 'results' // Pasamos a los resultados finales
+      gameRoom.phase = 'results'
     }
     
     io.to(cleanRoom).emit('room-state', gameRoom)
@@ -129,12 +157,11 @@ io.on('connection', (socket) => {
     rooms[room].players = rooms[room].players.filter(p => p.id !== socket.id)
     delete rooms[room].answers[socket.id]
     delete rooms[room].scores[socket.id]
-    if (rooms[room].votes) delete rooms[room].votes[socket.id]
     io.to(room).emit('room-state', rooms[room])
   })
 })
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
-  console.log(`Servidor Basta Online iniciado en puerto ${PORT}`);
+  console.log(`Servidor Basta listo en puerto ${PORT}`)
 })
