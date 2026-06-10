@@ -21,7 +21,6 @@ function App() {
   useEffect(() => {
     socket.on('room-state', data => {
       setState(prevState => {
-        // DETECCIÓN INTELIGENTE: Si pasamos de cualquier fase a 'playing', limpiamos la mesa para TODOS
         if (prevState.phase !== 'playing' && data.phase === 'playing') {
           setAnswers({})
           setHasVoted(false)
@@ -40,9 +39,8 @@ function App() {
     setJoined(true)
   }
 
-  const startGame = () => {
-    socket.emit('start-game', room)
-  }
+  const startGame = () => socket.emit('start-game', room)
+  const restartRound = () => socket.emit('restart-round', room)
 
   const submitAnswers = () => socket.emit('submit-answers', { room, answers })
 
@@ -62,6 +60,12 @@ function App() {
     socket.emit('submit-votes', { room, votes: myVotes })
     setHasVoted(true)
   }
+
+  // Ordenar jugadores y asignar medallas
+  const sortedPlayers = [...state.players].sort((a, b) => b.total - a.total)
+
+  // Validar si el botón BASTA debe estar activo
+  const isBastaDisabled = categories.some(cat => !answers[cat] || !answers[cat].trim())
 
   return (
     <div className="container">
@@ -88,9 +92,19 @@ function App() {
           <div className="card">
             <h2>Sala: {room}</h2>
             <div className="players-container">
-              {state.players.map(player => (
-                <span className="badge" key={player.id}>{player.name}: {player.total} pts</span>
-              ))}
+              {sortedPlayers.map((player, index) => {
+                let medal = ''
+                if (player.total > 0) {
+                  if (index === 0) medal = '🥇 '
+                  else if (index === 1) medal = '🥈 '
+                  else if (index === 2) medal = '🥉 '
+                }
+                return (
+                  <span className="badge" key={player.id}>
+                    {medal}{player.name}: {player.total} pts
+                  </span>
+                )
+              })}
             </div>
           </div>
 
@@ -104,6 +118,26 @@ function App() {
                 </div>
               ) : (
                 <>
+                  {/* Botones Superiores: Basta y Reiniciar */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginBottom: '20px', borderBottom: '1px solid #334155', paddingBottom: '15px' }}>
+                    <button 
+                      className="danger" 
+                      onClick={basta} 
+                      disabled={isBastaDisabled}
+                      style={{ 
+                        margin: 0, 
+                        flex: '1',
+                        opacity: isBastaDisabled ? 0.4 : 1, 
+                        cursor: isBastaDisabled ? 'not-allowed' : 'pointer' 
+                      }}
+                    >
+                      {isBastaDisabled ? '⚠️ LLENA TODO PARA GRITAR BASTA' : '¡BASTA PARA TODOS!'}
+                    </button>
+                    <button className="secondary" onClick={restartRound} style={{ margin: 0 }}>
+                      🔄 Reiniciar Ronda
+                    </button>
+                  </div>
+
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '10px 0' }}>
                     <div className="letter" style={{ textAlign: 'left', fontSize: '80px' }}>{state.letter}</div>
                     <div style={{ fontSize: '1.5rem', fontWeight: 'bold', background: state.timer <= 10 ? '#ef4444' : '#1e293b', padding: '10px 20px', borderRadius: '12px', transition: '0.3s' }}>
@@ -121,15 +155,11 @@ function App() {
                           onChange={e => {
                             const newAnswers = { ...answers, [cat]: e.target.value }
                             setAnswers(newAnswers)
-                            // Va guardando en tiempo real en el servidor por si se acaba el tiempo de imprevisto
                             socket.emit('submit-answers', { room, answers: newAnswers })
                           }}
                         />
                       </div>
                     ))}
-                  </div>
-                  <div className="btn-group" style={{ marginTop: '25px' }}>
-                    <button className="danger" onClick={basta}>¡BASTA!</button>
                   </div>
                 </>
               )}
@@ -139,7 +169,7 @@ function App() {
           {/* FASE DE VOTACIÓN */}
           {state.phase === 'voting' && (
             <div className="card">
-              <h2>Fase de Votación (Stopots Style)</h2>
+              <h2>Fase de Votación</h2>
               {hasVoted ? (
                 <div style={{ textAlign: 'center', padding: '30px' }}>
                   <h3>Tus votos han sido enviados.</h3>
