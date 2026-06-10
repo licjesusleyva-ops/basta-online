@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 
-// Recuerda cambiar esta IP cuando subamos el juego a internet
 const socket = io('https://basta-online.onrender.com')
 
 const categories = ['Nombre', 'Apellido', 'Ciudad o país', 'Animal', 'Color', 'Fruta o comida', 'Cosa', 'Marca']
@@ -14,18 +13,22 @@ function App() {
   const [name, setName] = useState('')
   const [room, setRoom] = useState('')
   const [joined, setJoined] = useState(false)
-  const [state, setState] = useState({ players: [], letter: 'A', phase: 'waiting', answers: {}, scores: {} })
+  const [state, setState] = useState({ players: [], letter: 'A', phase: 'waiting', answers: {}, scores: {}, timer: 60 })
   const [answers, setAnswers] = useState({})
   const [myVotes, setMyVotes] = useState({})
   const [hasVoted, setHasVoted] = useState(false)
 
   useEffect(() => {
     socket.on('room-state', data => {
-      setState(data)
-      if (data.phase === 'playing') {
-        setHasVoted(false)
-        setMyVotes({})
-      }
+      setState(prevState => {
+        // DETECCIÓN INTELIGENTE: Si pasamos de cualquier fase a 'playing', limpiamos la mesa para TODOS
+        if (prevState.phase !== 'playing' && data.phase === 'playing') {
+          setAnswers({})
+          setHasVoted(false)
+          setMyVotes({})
+        }
+        return data
+      })
     })
     return () => socket.off('room-state')
   }, [])
@@ -38,7 +41,6 @@ function App() {
   }
 
   const startGame = () => {
-    setAnswers({})
     socket.emit('start-game', room)
   }
 
@@ -65,7 +67,7 @@ function App() {
     <div className="container">
       <div className="header">
         <h1>Basta Online</h1>
-        <p>Juego en red de velocidad mental</p>
+        <p>Inspirado en Stopots • Juego en Red</p>
       </div>
 
       {!joined && (
@@ -98,11 +100,17 @@ function App() {
               {state.phase === 'waiting' ? (
                 <div style={{ textAlign: 'center', padding: '20px' }}>
                   <h2>Esperando para iniciar</h2>
-                  <button className="secondary" onClick={startGame}>Generar Letra y Empezar</button>
+                  <button className="secondary" onClick={startGame}>Empezar Nueva Ronda</button>
                 </div>
               ) : (
                 <>
-                  <div className="letter-container"><div className="letter">{state.letter}</div></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '10px 0' }}>
+                    <div className="letter" style={{ textAlign: 'left', fontSize: '80px' }}>{state.letter}</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', background: state.timer <= 10 ? '#ef4444' : '#1e293b', padding: '10px 20px', borderRadius: '12px', transition: '0.3s' }}>
+                      ⏱️ {state.timer}s
+                    </div>
+                  </div>
+                  
                   <div className="grid">
                     {categories.map(cat => (
                       <div className="input-group" key={cat}>
@@ -110,14 +118,18 @@ function App() {
                         <input
                           placeholder={`Con ${state.letter}...`}
                           value={answers[cat] || ''}
-                          onChange={e => setAnswers({ ...answers, [cat]: e.target.value })}
+                          onChange={e => {
+                            const newAnswers = { ...answers, [cat]: e.target.value }
+                            setAnswers(newAnswers)
+                            // Va guardando en tiempo real en el servidor por si se acaba el tiempo de imprevisto
+                            socket.emit('submit-answers', { room, answers: newAnswers })
+                          }}
                         />
                       </div>
                     ))}
                   </div>
-                  <div className="btn-group">
-                    <button onClick={submitAnswers}>Guardar (Sin gritar Basta)</button>
-                    <button className="danger" onClick={basta}>¡BASTA PARA TODOS!</button>
+                  <div className="btn-group" style={{ marginTop: '25px' }}>
+                    <button className="danger" onClick={basta}>¡BASTA!</button>
                   </div>
                 </>
               )}
@@ -127,36 +139,43 @@ function App() {
           {/* FASE DE VOTACIÓN */}
           {state.phase === 'voting' && (
             <div className="card">
-              <h2>Fase de Votación</h2>
+              <h2>Fase de Votación (Stopots Style)</h2>
               {hasVoted ? (
                 <div style={{ textAlign: 'center', padding: '30px' }}>
                   <h3>Tus votos han sido enviados.</h3>
-                  <p style={{color: '#94a3b8'}}>Esperando a que los demás terminen de votar...</p>
+                  <p style={{color: '#94a3b8'}}>Esperando a que los demás terminen de calificar...</p>
                 </div>
               ) : (
                 <>
-                  <p>Evalúa las respuestas de tus oponentes. Tu voto decide si ganan puntos o no.</p>
+                  <p>Califica las respuestas de la sala. ¡Sean justos!</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     {Object.entries(state.answers || {}).map(([targetId, payload]) => {
-                      if (targetId === socket.id) return null // No te votas a ti mismo
+                      const isMe = targetId === socket.id
                       return (
-                        <div key={targetId} style={{ background: 'rgba(0,0,0,0.2)', padding: '15px', borderRadius: '12px' }}>
-                          <h3 style={{ color: '#facc15', marginTop: 0 }}>Respuestas de {payload.player}</h3>
+                        <div key={targetId} style={{ background: isMe ? 'rgba(59,130,246,0.1)' : 'rgba(0,0,0,0.2)', padding: '15px', borderRadius: '12px', border: isMe ? '1px solid #3b82f6' : 'none' }}>
+                          <h3 style={{ color: isMe ? '#3b82f6' : '#facc15', marginTop: 0 }}>
+                            Respuestas de {payload.player} {isMe && '(Tú)'}
+                          </h3>
                           {categories.map(cat => {
-                            const answer = payload.answers[cat]
-                            if (!answer) return null
+                            const answer = payload.answers?.[cat]
+                            if (!answer || !answer.trim()) return null
                             const vote = myVotes[targetId]?.[cat]
                             return (
                               <div key={cat} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', padding: '8px 0' }}>
-                                <div><strong>{cat}:</strong> <span style={{fontSize: '1.1rem'}}>{answer}</span></div>
-                                <div style={{ display: 'flex', gap: '5px' }}>
-                                  <button 
-                                    style={{ padding: '8px 12px', margin: 0, background: vote === true ? '#10b981' : '#334155' }}
-                                    onClick={() => handleVote(targetId, cat, true)}>✅</button>
-                                  <button 
-                                    style={{ padding: '8px 12px', margin: 0, background: vote === false ? '#ef4444' : '#334155' }}
-                                    onClick={() => handleVote(targetId, cat, false)}>❌</button>
-                                </div>
+                                <div><strong>{cat}:</strong> <span style={{fontSize: '1.1rem', marginLeft: '10px'}}>{answer}</span></div>
+                                
+                                {!isMe ? (
+                                  <div style={{ display: 'flex', gap: '5px' }}>
+                                    <button 
+                                      style={{ padding: '6px 12px', margin: 0, background: vote === true ? '#10b981' : '#334155' }}
+                                      onClick={() => handleVote(targetId, cat, true)}>✅</button>
+                                    <button 
+                                      style={{ padding: '6px 12px', margin: 0, background: vote === false ? '#ef4444' : '#334155' }}
+                                      onClick={() => handleVote(targetId, cat, false)}>❌</button>
+                                  </div>
+                                ) : (
+                                  <span style={{ color: '#64748b', fontSize: '0.85rem', textTransform: 'uppercase' }}>Tuya</span>
+                                )}
                               </div>
                             )
                           })}
@@ -164,8 +183,8 @@ function App() {
                       )
                     })}
                   </div>
-                  <div className="btn-group" style={{ marginTop: '20px' }}>
-                    <button className="secondary" onClick={sendVotes}>Enviar Mis Votos</button>
+                  <div className="btn-group" style={{ marginTop: '25px' }}>
+                    <button className="secondary" onClick={sendVotes}>Enviar Mis Calificaciones</button>
                   </div>
                 </>
               )}
@@ -181,23 +200,28 @@ function App() {
                   <thead>
                     <tr>
                       <th>Jugador</th>
-                      <th>Respuestas (Las que sobrevivieron)</th>
-                      <th>Puntos Ganados</th>
+                      <th>Palabras Validadas</th>
+                      <th>Puntos de la Ronda</th>
                     </tr>
                   </thead>
                   <tbody>
                     {Object.entries(state.answers || {}).map(([id, payload]) => (
                       <tr key={id}>
                         <td><strong>{payload.player}</strong></td>
-                        <td>{Object.entries(payload.answers || {}).map(([k, v]) => v ? `${k}: ${v}` : '').filter(Boolean).join(' • ')}</td>
+                        <td>
+                          {Object.entries(payload.answers || {})
+                            .map(([k, v]) => v ? `${k}: ${v}` : '')
+                            .filter(Boolean)
+                            .join(' • ')}
+                        </td>
                         <td><strong style={{color: '#10b981', fontSize: '1.2rem'}}>+{state.scores?.[id] || 0}</strong></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              <div className="btn-group">
-                <button className="secondary" onClick={startGame}>Siguiente Ronda (Nueva Letra)</button>
+              <div className="btn-group" style={{ marginTop: '20px' }}>
+                <button className="secondary" onClick={startGame}>Siguiente Ronda</button>
               </div>
             </div>
           )}
