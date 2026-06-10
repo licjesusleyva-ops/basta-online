@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 
 // Recuerda cambiar esta IP cuando subamos el juego a internet
-const socket = io('http://172.16.116.19:3001')
+const socket = io('https://basta-online.onrender.com')
 
 const categories = ['Nombre', 'Apellido', 'Ciudad o país', 'Animal', 'Color', 'Fruta o comida', 'Cosa', 'Marca']
 
